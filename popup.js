@@ -1,9 +1,7 @@
-import { pipeline } from './libs/transformers.min.js';
-
 const typedTextDiv = document.getElementById("typedText");
 const warningDiv = document.getElementById("warning");
 
-chrome.runtime.sendMessage({ type: "getText" }, async (response) => {
+chrome.runtime.sendMessage({ type: "getText" }, (response) => {
   const text = response.text || "(nothing yet)";
   typedTextDiv.textContent = text;
 
@@ -11,35 +9,24 @@ chrome.runtime.sendMessage({ type: "getText" }, async (response) => {
 
   warningDiv.textContent = "Checking for PII...";
 
-  try {
-    const ner = await pipeline("ner", "Xenova/bert-base-NER");
-    const entities = await ner(text);
+  // Ask the background script to check for PII
+  chrome.runtime.sendMessage({ type: "checkPII", text: text }, (result) => {
+    if (result.error) {
+      warningDiv.textContent = "❌ Error: " + result.error;
+      return;
+    }
 
-    const piiGroups = ["PER", "ORG", "LOC"];
-    const foundEntities = entities.filter(e => piiGroups.includes(e.entity_group));
-
-    const patterns = [
-      { name: "Email", re: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/ },
-      { name: "Phone", re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/ },
-      { name: "SSN", re: /\b\d{3}-\d{2}-\d{4}\b/ },
-      { name: "Credit Card", re: /\b(?:\d[ -]*?){13,16}\b/ }
-    ];
-    const foundPatterns = patterns.filter(p => p.re.test(text));
-
-    if (foundEntities.length > 0 || foundPatterns.length > 0) {
+    if (result.hasPII) {
       let details = [];
-      if (foundEntities.length > 0) {
-        details.push("Entities: " + foundEntities.map(e => e.entity_group).join(", "));
+      if (result.entities && result.entities.length > 0) {
+        details.push("Entities: " + result.entities.map(e => e.entity_group).join(", "));
       }
-      if (foundPatterns.length > 0) {
-        details.push("Patterns: " + foundPatterns.map(p => p.name).join(", "));
+      if (result.patterns && result.patterns.length > 0) {
+        details.push("Patterns: " + result.patterns.join(", "));
       }
       warningDiv.textContent = `⚠️ Possible PII detected!\n${details.join(" | ")}`;
     } else {
       warningDiv.textContent = "✅ No PII detected.";
     }
-  } catch (err) {
-    warningDiv.textContent = "❌ Error: " + err.message;
-    console.error(err);
-  }
+  });
 });
